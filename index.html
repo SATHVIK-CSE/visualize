@@ -12,6 +12,7 @@
   <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/legacy/build/pdf.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -81,7 +82,7 @@
         <label for="fileInput" class="cursor-pointer text-xs sm:text-sm font-semibold px-3.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-sm inline-flex items-center gap-1.5">
           <span>+ Insert Data File</span>
         </label>
-        <input id="fileInput" type="file" accept=".csv,.tsv,.json,.xlsx,.xls" class="hidden" />
+        <input id="fileInput" type="file" accept=".csv,.tsv,.json,.xlsx,.xls,.txt,.pdf" class="hidden" />
       </div>
     </div>
   </header>
@@ -100,7 +101,7 @@
             <span id="datasetName" class="font-semibold text-slate-900 text-sm sm:text-base">Global Cities &amp; Sales (Sample)</span>
             <span id="datasetBadge" class="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium border border-emerald-200">11 rows &bull; 7 columns</span>
           </div>
-          <p class="text-xs text-slate-500 mt-0.5">Drag &amp; drop a <span class="font-medium text-slate-700">.csv, .tsv, .json, or .xlsx</span> file here, or click <strong>+ Insert Data File</strong>.</p>
+          <p class="text-xs text-slate-500 mt-0.5">Drag &amp; drop a <span class="font-medium text-slate-700">.csv, .tsv, .json, .xlsx, or .pdf</span> file here, or click <strong>+ Insert Data File</strong>.</p>
         </div>
       </div>
       <button id="exportBtn" type="button" class="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 self-end sm:self-center">
@@ -272,9 +273,13 @@
         <button id="closePasteBtn" type="button" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
       </div>
       <textarea id="pasteInput" rows="8" class="w-full text-xs font-mono border border-slate-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="City,Country,Sales,Profit,Lat,Lng&#10;New Delhi,India,64500,18200,28.6139,77.2090&#10;London,United Kingdom,81000,24500,51.5074,-0.1278"></textarea>
-      <div class="flex justify-end gap-2">
-        <button id="cancelPasteBtn" type="button" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
-        <button id="loadPasteBtn" type="button" class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs sm:text-sm font-semibold hover:bg-blue-700">Visualize Data</button>
+      <p id="pasteError" class="hidden text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></p>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <button id="fillSamplePasteBtn" type="button" class="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-50">Insert Sample CSV</button>
+        <div class="flex gap-2">
+          <button id="cancelPasteBtn" type="button" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button id="loadPasteBtn" type="button" class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs sm:text-sm font-semibold hover:bg-blue-700">Visualize Data</button>
+        </div>
       </div>
     </div>
   </div>
@@ -376,9 +381,40 @@
       el._timer = setTimeout(() => el.classList.add('hidden'), 3500);
     }
 
-    function parseCSV(text, delimiter = ',') {
+    function toCleanNumber(raw) {
+      if (typeof raw === 'number') return raw;
+      const cleaned = String(raw ?? '').trim().replace(/[$€£₹,%\s]/g, '');
+      if (cleaned === '') return NaN;
+      return Number(cleaned);
+    }
+
+    function detectDelimiter(headerLine) {
+      if (headerLine.includes('\t')) return '\t';
+      const counts = [',', ';', '|'].map(d => ({ d, n: headerLine.split(d).length - 1 }));
+      counts.sort((a, b) => b.n - a.n);
+      if (counts[0].n > 0) return counts[0].d;
+      if (/\s{2,}/.test(headerLine.trim())) return /\s{2,}/;
+      return ',';
+    }
+
+    function parseCSV(text, delimiter = null) {
       const lines = text.trim().split(/\r?\n/).filter(l => l.trim().length > 0);
       if (lines.length < 2) return [];
+      const activeDelim = delimiter || detectDelimiter(lines[0]);
+      if (activeDelim instanceof RegExp) {
+        const headers = lines[0].trim().split(activeDelim).map((h, idx) => h.trim() || `Column_${idx + 1}`);
+        return lines.slice(1).map(line => {
+          const vals = line.trim().split(activeDelim);
+          const obj = {};
+          headers.forEach((h, i) => {
+            const raw = (vals[i] ?? '').trim();
+            const num = toCleanNumber(raw);
+            obj[h] = raw !== '' && !Number.isNaN(num) ? num : raw;
+          });
+          return obj;
+        });
+      }
+      delimiter = activeDelim;
       const splitLine = (line) => {
         const out = [];
         let cur = '';
@@ -404,7 +440,7 @@
         const obj = {};
         headers.forEach((h, i) => {
           const raw = vals[i] ?? '';
-          const num = Number(raw.replace(/,/g, ''));
+          const num = toCleanNumber(raw);
           obj[h] = raw !== '' && !Number.isNaN(num) ? num : raw;
         });
         return obj;
@@ -757,10 +793,100 @@
       renderAll();
     }
 
+    async function extractRowsFromPDF(arrayBuffer) {
+      if (typeof pdfjsLib === 'undefined') {
+        throw new Error('PDF parser is still loading. Please try again.');
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/legacy/build/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const allLines = [];
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const lineMap = new Map();
+        content.items.forEach(item => {
+          const str = (item.str || '').trim();
+          if (!str) return;
+          const y = Math.round(item.transform[5] / 4) * 4;
+          const x = item.transform[4];
+          if (!lineMap.has(y)) lineMap.set(y, []);
+          lineMap.get(y).push({ x, str, w: item.width || 0 });
+        });
+        const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
+        sortedYs.forEach(y => {
+          const items = lineMap.get(y).sort((a, b) => a.x - b.x);
+          const cells = [];
+          let cur = items[0].str;
+          let prevEnd = items[0].x + items[0].w;
+          for (let i = 1; i < items.length; i++) {
+            const gap = items[i].x - prevEnd;
+            if (gap > 10) {
+              cells.push(cur.trim());
+              cur = items[i].str;
+            } else {
+              cur += ' ' + items[i].str;
+            }
+            prevEnd = items[i].x + items[i].w;
+          }
+          cells.push(cur.trim());
+          if (cells.length >= 2) allLines.push(cells);
+        });
+      }
+
+      // Find the largest contiguous table block with consistent column count & numeric values
+      let bestBlock = [];
+      let curBlock = [];
+      let targetCols = 0;
+      for (const cells of allLines) {
+        if (curBlock.length === 0) {
+          curBlock = [cells];
+          targetCols = cells.length;
+        } else if (Math.abs(cells.length - targetCols) <= 1 && cells.length >= 2) {
+          curBlock.push(cells);
+        } else {
+          if (curBlock.length > bestBlock.length) bestBlock = curBlock;
+          curBlock = [cells];
+          targetCols = cells.length;
+        }
+      }
+      if (curBlock.length > bestBlock.length) bestBlock = curBlock;
+
+      if (bestBlock.length < 2) return [];
+      const colCount = bestBlock[0].length;
+      const headers = bestBlock[0].map((h, i) => h || `Column_${i + 1}`);
+      return bestBlock.slice(1).filter(r => r.length >= 2).map(vals => {
+        const obj = {};
+        for (let i = 0; i < colCount; i++) {
+          const raw = (vals[i] ?? '').trim();
+          const num = toCleanNumber(raw);
+          obj[headers[i]] = raw !== '' && !Number.isNaN(num) ? num : raw;
+        }
+        return obj;
+      });
+    }
+
     function handleFile(file) {
       if (!file) return;
       const ext = file.name.split('.').pop().toLowerCase();
       const reader = new FileReader();
+      if (ext === 'pdf') {
+        reader.onload = async (e) => {
+          try {
+            showToast('Reading PDF tables...');
+            const rows = await extractRowsFromPDF(e.target.result);
+            if (!rows.length) {
+              return showToast('No data table found in this PDF. Try a CSV, Excel, or text-based table PDF.', true);
+            }
+            loadDataset(file.name, rows);
+            showToast(`Extracted ${rows.length} rows from ${file.name}`);
+          } catch (err) {
+            showToast(`PDF error: ${err.message}`, true);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        return;
+      }
       if (ext === 'xlsx' || ext === 'xls') {
         if (typeof XLSX === 'undefined') return showToast('Excel parser still loading, please try again.', true);
         reader.onload = (e) => {
@@ -780,8 +906,10 @@
             if (ext === 'json') {
               const parsed = JSON.parse(text);
               rows = Array.isArray(parsed) ? parsed : (parsed.data || parsed.rows || [parsed]);
+            } else if (['csv', 'tsv', 'txt'].includes(ext)) {
+              rows = parseCSV(text, ext === 'tsv' ? '\t' : null);
             } else {
-              rows = parseCSV(text, ext === 'tsv' ? '\t' : ',');
+              return showToast(`Unsupported file (.${ext}). Please upload CSV, TSV, JSON, or XLSX.`, true);
             }
             loadDataset(file.name, rows);
             showToast(`Loaded ${file.name} (${rows.length} rows)`);
@@ -802,7 +930,10 @@
     document.getElementById('aggSelect').addEventListener('change', (e) => { state.agg = e.target.value; renderAll(); });
     document.getElementById('limitSelect').addEventListener('change', (e) => { state.limit = e.target.value; renderAll(); });
     document.getElementById('tableSearch').addEventListener('input', (e) => { state.searchQuery = e.target.value; renderTable(); });
-    document.getElementById('fileInput').addEventListener('change', (e) => handleFile(e.target.files[0]));
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+      if (e.target.files[0]) handleFile(e.target.files[0]);
+      e.target.value = '';
+    });
 
     const dropZone = document.getElementById('dropZone');
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-active'); });
@@ -814,20 +945,42 @@
     });
 
     const pasteModal = document.getElementById('pasteModal');
-    document.getElementById('openPasteBtn').addEventListener('click', () => pasteModal.classList.remove('hidden'));
+    const pasteErrorEl = document.getElementById('pasteError');
+    const hidePasteError = () => { pasteErrorEl.classList.add('hidden'); pasteErrorEl.textContent = ''; };
+    const showPasteError = (msg) => { pasteErrorEl.textContent = msg; pasteErrorEl.classList.remove('hidden'); };
+
+    document.getElementById('openPasteBtn').addEventListener('click', () => { hidePasteError(); pasteModal.classList.remove('hidden'); });
     document.getElementById('closePasteBtn').addEventListener('click', () => pasteModal.classList.add('hidden'));
     document.getElementById('cancelPasteBtn').addEventListener('click', () => pasteModal.classList.add('hidden'));
+    document.getElementById('fillSamplePasteBtn').addEventListener('click', () => {
+      hidePasteError();
+      document.getElementById('pasteInput').value = 'Country,GDP_Trillion_USD,GDP_Per_Capita_Thousand_USD,Real_GDP_Growth_Pct\nUnited States of America,30.62,89.60,2.0\nChina,19.40,13.81,4.8\nGermany,5.01,59.93,0.2\nJapan,4.28,34.71,1.1\nIndia,4.13,2.82,6.6\nUnited Kingdom,3.96,56.60,1.3';
+    });
     document.getElementById('loadPasteBtn').addEventListener('click', () => {
+      hidePasteError();
       const raw = document.getElementById('pasteInput').value.trim();
-      if (!raw) return showToast('Please paste CSV or JSON data first.', true);
+      if (!raw) return showPasteError('Paste at least 1 header row and 1 data row (CSV, TSV, or JSON).');
       try {
-        const rows = raw.startsWith('[') || raw.startsWith('{')
-          ? (Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [JSON.parse(raw)])
-          : parseCSV(raw, ',');
+        let rows = [];
+        if (raw.startsWith('[') || raw.startsWith('{')) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) rows = parsed;
+          else {
+            const firstArr = Object.values(parsed).find(v => Array.isArray(v));
+            rows = firstArr || [parsed];
+          }
+        } else {
+          rows = parseCSV(raw, null);
+        }
+        if (!rows.length) {
+          return showPasteError('Could not detect rows. Make sure you have a header line and at least one data line separated by commas, tabs, or semicolons.');
+        }
         loadDataset('Pasted Dataset', rows);
         pasteModal.classList.add('hidden');
         showToast(`Loaded ${rows.length} pasted rows`);
-      } catch { showToast('Invalid CSV or JSON format.', true); }
+      } catch (err) {
+        showPasteError(`Parse error: ${err.message}. Check your CSV or JSON formatting.`);
+      }
     });
 
     document.getElementById('exportBtn').addEventListener('click', () => {
