@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DataPulse Visualizer — Charts &amp; World Map</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    .tool-pill {
+      transition: all 0.15s ease;
+      cursor: pointer;
+    }
+    .tool-pill.active {
+      background-color: #2563eb;
+      color: #ffffff;
+      border-color: #2563eb;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+    }
+    .drop-active {
+      border-color: #2563eb !important;
+      background-color: #eff6ff !important;
+    }
+    .map-tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.92);
+      color: #f8fafc;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      z-index: 60;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+      display: none;
+    }
+    .no-scrollbar::-webkit-scrollbar { height: 6px; }
+    .no-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <div id="toast" class="fixed top-4 right-4 z-50 hidden max-w-sm rounded-xl px-4 py-3 text-sm font-medium shadow-lg"></div>
+  <div id="mapTooltip" class="map-tooltip"></div>
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">D</div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold text-slate-900 leading-tight">DataPulse Visualizer</h1>
+          <p class="text-xs text-slate-500">Insert CSV, TSV, JSON, or Excel files &amp; switch across all charts &amp; maps</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label for="sampleSelect" class="sr-only">Sample Dataset</label>
+        <select id="sampleSelect" class="text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="global_sales">Sample: Global Cities &amp; Sales</option>
+          <option value="monthly_finance">Sample: Monthly Revenue &amp; Profit</option>
+          <option value="product_mix">Sample: Product Category Mix</option>
+        </select>
+
+        <button id="openPasteBtn" type="button" class="text-xs sm:text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">
+          Paste Data
+        </button>
+
+        <label for="fileInput" class="cursor-pointer text-xs sm:text-sm font-semibold px-3.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-sm inline-flex items-center gap-1.5">
+          <span>+ Insert Data File</span>
+        </label>
+        <input id="fileInput" type="file" accept=".csv,.tsv,.json,.xlsx,.xls" class="hidden" />
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-5">
+    <!-- File Upload Dropzone -->
+    <section id="dropZone" class="bg-white border-2 border-dashed border-slate-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors">
+      <div class="flex items-center gap-3.5">
+        <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span id="datasetName" class="font-semibold text-slate-900 text-sm sm:text-base">Global Cities &amp; Sales (Sample)</span>
+            <span id="datasetBadge" class="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium border border-emerald-200">11 rows &bull; 7 columns</span>
+          </div>
+          <p class="text-xs text-slate-500 mt-0.5">Drag &amp; drop a <span class="font-medium text-slate-700">.csv, .tsv, .json, or .xlsx</span> file here, or click <strong>+ Insert Data File</strong>.</p>
+        </div>
+      </div>
+      <button id="exportBtn" type="button" class="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 self-end sm:self-center">
+        Download PNG
+      </button>
+    </section>
+
+    <!-- All Charts & Map Bar -->
+    <section class="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+      <div class="flex items-center justify-between mb-2 px-1">
+        <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">All Charts &amp; Maps Bar</span>
+        <span id="activeToolLabel" class="text-xs font-medium text-blue-600">Viewing: All Views Grid</span>
+      </div>
+      <div id="chartBar" class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <button data-type="all" class="tool-pill active shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">All Views Grid</button>
+        <button data-type="bar" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Bar Graph</button>
+        <button data-type="horizontalBar" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Horizontal Bar</button>
+        <button data-type="pie" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Pie Chart</button>
+        <button data-type="doughnut" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Doughnut</button>
+        <button data-type="line" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Line Chart</button>
+        <button data-type="area" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Area Chart</button>
+        <button data-type="scatter" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Scatter Plot</button>
+        <button data-type="radar" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Radar Chart</button>
+        <button data-type="polarArea" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">Polar Area</button>
+        <button data-type="map" class="tool-pill shrink-0 px-3.5 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm font-medium bg-slate-50 text-slate-700 hover:bg-slate-100">World Map</button>
+      </div>
+    </section>
+
+    <!-- Data Mapping & KPIs -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div class="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Data Mapping</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div>
+            <label for="labelCol" class="block text-xs font-medium text-slate-600 mb-1">Category / Label</label>
+            <select id="labelCol" class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white"></select>
+          </div>
+          <div>
+            <label for="valueCol" class="block text-xs font-medium text-slate-600 mb-1">Primary Value</label>
+            <select id="valueCol" class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white"></select>
+          </div>
+          <div>
+            <label for="aggSelect" class="block text-xs font-medium text-slate-600 mb-1">Aggregation</label>
+            <select id="aggSelect" class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+              <option value="sum">Sum</option>
+              <option value="avg">Average</option>
+              <option value="count">Count</option>
+              <option value="max">Max</option>
+              <option value="min">Min</option>
+            </select>
+          </div>
+          <div>
+            <label for="limitSelect" class="block text-xs font-medium text-slate-600 mb-1">Show Items</label>
+            <select id="limitSelect" class="w-full text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+              <option value="12">Top 12</option>
+              <option value="8">Top 8</option>
+              <option value="20">Top 20</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-5 grid grid-cols-2 gap-3">
+        <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+          <div class="text-xs text-slate-500">Total (Aggregated)</div>
+          <div id="kpiTotal" class="text-lg sm:text-xl font-bold text-slate-900 mt-0.5">—</div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+          <div class="text-xs text-slate-500">Average per Group</div>
+          <div id="kpiAvg" class="text-lg sm:text-xl font-bold text-slate-900 mt-0.5">—</div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+          <div class="text-xs text-slate-500">Highest Group</div>
+          <div id="kpiMax" class="text-sm sm:text-base font-semibold text-blue-600 mt-0.5 truncate">—</div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+          <div class="text-xs text-slate-500">Distinct Groups</div>
+          <div id="kpiGroups" class="text-lg sm:text-xl font-bold text-slate-900 mt-0.5">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Visualization Stage -->
+    <section id="vizStage" class="space-y-4">
+      <div id="singleView" class="hidden bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm">
+        <div class="mb-4">
+          <h3 id="singleTitle" class="text-base font-bold text-slate-900">Chart</h3>
+          <p id="singleSubtitle" class="text-xs text-slate-500">Interactive visualization</p>
+        </div>
+        <div id="singleChartWrap" class="relative h-80 sm:h-96 w-full">
+          <canvas id="singleCanvas"></canvas>
+        </div>
+        <div id="singleMapWrap" class="hidden w-full">
+          <div id="singleMapContainer" class="w-full h-80 sm:h-96 rounded-xl bg-slate-50 border border-slate-200 overflow-hidden relative"></div>
+          <p id="mapHint" class="text-xs text-slate-500 mt-2"></p>
+        </div>
+      </div>
+
+      <div id="gridView" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-800">Bar Graph</h3>
+            <button data-focus="bar" class="focus-btn text-xs text-blue-600 hover:underline font-medium">Expand</button>
+          </div>
+          <div class="relative h-72"><canvas id="gridBar"></canvas></div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-800">Pie Chart</h3>
+            <button data-focus="pie" class="focus-btn text-xs text-blue-600 hover:underline font-medium">Expand</button>
+          </div>
+          <div class="relative h-72"><canvas id="gridPie"></canvas></div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-800">Line &amp; Trend Chart</h3>
+            <button data-focus="line" class="focus-btn text-xs text-blue-600 hover:underline font-medium">Expand</button>
+          </div>
+          <div class="relative h-72"><canvas id="gridLine"></canvas></div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-slate-800">Doughnut Chart</h3>
+            <button data-focus="doughnut" class="focus-btn text-xs text-blue-600 hover:underline font-medium">Expand</button>
+          </div>
+          <div class="relative h-72"><canvas id="gridDoughnut"></canvas></div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm md:col-span-2">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="text-sm font-bold text-slate-800">World Geo Map</h3>
+              <p id="gridMapHint" class="text-xs text-slate-500">Plots latitude/longitude coordinates or matched country/city names</p>
+            </div>
+            <button data-focus="map" class="focus-btn text-xs text-blue-600 hover:underline font-medium">Expand</button>
+          </div>
+          <div id="gridMapContainer" class="w-full h-80 rounded-xl bg-slate-50 border border-slate-200 overflow-hidden relative"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Data Preview Table -->
+    <section class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-sm font-bold text-slate-900">Inserted Data Preview</h2>
+          <p id="tableMeta" class="text-xs text-slate-500">Showing up to 50 rows</p>
+        </div>
+        <input id="tableSearch" type="search" placeholder="Filter rows..." class="text-xs sm:text-sm border border-slate-300 rounded-lg px-3 py-1.5 w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <div class="overflow-x-auto max-h-72 border border-slate-200 rounded-xl">
+        <table class="min-w-full text-left text-xs sm:text-sm">
+          <thead id="tableHead" class="bg-slate-50 text-slate-700 font-semibold sticky top-0 border-b border-slate-200"></thead>
+          <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Paste Data Modal -->
+  <div id="pasteModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-slate-900">Paste CSV or JSON Data</h3>
+        <button id="closePasteBtn" type="button" class="text-slate-400 hover:text-slate-600 text-lg font-bold">&times;</button>
+      </div>
+      <textarea id="pasteInput" rows="8" class="w-full text-xs font-mono border border-slate-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="City,Country,Sales,Profit,Lat,Lng&#10;New Delhi,India,64500,18200,28.6139,77.2090&#10;London,United Kingdom,81000,24500,51.5074,-0.1278"></textarea>
+      <div class="flex justify-end gap-2">
+        <button id="cancelPasteBtn" type="button" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50">Cancel</button>
+        <button id="loadPasteBtn" type="button" class="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs sm:text-sm font-semibold hover:bg-blue-700">Visualize Data</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PALETTE = [
+      '#2563eb', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444',
+      '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
+      '#84cc16', '#06b6d4'
+    ];
+
+    const SAMPLES = {
+      global_sales: {
+        name: 'Global Cities & Sales (Sample)',
+        rows: [
+          { City: 'New Delhi', Country: 'India', Sales: 64500, Profit: 18200, Orders: 410, Lat: 28.6139, Lng: 77.2090 },
+          { City: 'Mumbai', Country: 'India', Sales: 72000, Profit: 21400, Orders: 485, Lat: 19.0760, Lng: 72.8777 },
+          { City: 'London', Country: 'United Kingdom', Sales: 81000, Profit: 24500, Orders: 520, Lat: 51.5074, Lng: -0.1278 },
+          { City: 'New York', Country: 'United States of America', Sales: 95000, Profit: 29800, Orders: 610, Lat: 40.7128, Lng: -74.0060 },
+          { City: 'Tokyo', Country: 'Japan', Sales: 88000, Profit: 26100, Orders: 540, Lat: 35.6895, Lng: 139.6917 },
+          { City: 'Sydney', Country: 'Australia', Sales: 54000, Profit: 15800, Orders: 330, Lat: -33.8688, Lng: 151.2093 },
+          { City: 'Berlin', Country: 'Germany', Sales: 61500, Profit: 17900, Orders: 390, Lat: 52.5200, Lng: 13.4050 },
+          { City: 'Singapore', Country: 'Singapore', Sales: 69000, Profit: 22100, Orders: 445, Lat: 1.3521, Lng: 103.8198 },
+          { City: 'Paris', Country: 'France', Sales: 59000, Profit: 16800, Orders: 375, Lat: 48.8566, Lng: 2.3522 },
+          { City: 'Bangkok', Country: 'Thailand', Sales: 47000, Profit: 13200, Orders: 295, Lat: 13.7563, Lng: 100.5018 },
+          { City: 'Johannesburg', Country: 'South Africa', Sales: 41000, Profit: 11500, Orders: 250, Lat: -26.2041, Lng: 28.0473 }
+        ]
+      },
+      monthly_finance: {
+        name: 'Monthly Revenue & Profit (Sample)',
+        rows: [
+          { Month: 'Jan', Revenue: 42000, Expenses: 28000, Profit: 14000 },
+          { Month: 'Feb', Revenue: 46500, Expenses: 29500, Profit: 17000 },
+          { Month: 'Mar', Revenue: 51000, Expenses: 31000, Profit: 20000 },
+          { Month: 'Apr', Revenue: 49200, Expenses: 30200, Profit: 19000 },
+          { Month: 'May', Revenue: 58400, Expenses: 33400, Profit: 25000 },
+          { Month: 'Jun', Revenue: 63000, Expenses: 35000, Profit: 28000 },
+          { Month: 'Jul', Revenue: 61200, Expenses: 34200, Profit: 27000 },
+          { Month: 'Aug', Revenue: 67800, Expenses: 36800, Profit: 31000 },
+          { Month: 'Sep', Revenue: 71500, Expenses: 38500, Profit: 33000 },
+          { Month: 'Oct', Revenue: 75000, Expenses: 39200, Profit: 35800 }
+        ]
+      },
+      product_mix: {
+        name: 'Product Category Mix (Sample)',
+        rows: [
+          { Category: 'Cloud Software', Units: 1420, Revenue: 128000, Rating: 4.8 },
+          { Category: 'Analytics Tools', Units: 980, Revenue: 94500, Rating: 4.7 },
+          { Category: 'Security Suites', Units: 860, Revenue: 112000, Rating: 4.9 },
+          { Category: 'Mobile Apps', Units: 1650, Revenue: 74000, Rating: 4.5 },
+          { Category: 'IoT Sensors', Units: 540, Revenue: 63200, Rating: 4.4 },
+          { Category: 'Support Plans', Units: 1120, Revenue: 58000, Rating: 4.6 }
+        ]
+      }
+    };
+
+    const COUNTRY_COORDS = {
+      'india': [20.5937, 78.9629],
+      'united states': [37.0902, -95.7129],
+      'united states of america': [37.0902, -95.7129],
+      'usa': [37.0902, -95.7129],
+      'united kingdom': [55.3781, -3.4360],
+      'uk': [55.3781, -3.4360],
+      'japan': [36.2048, 138.2529],
+      'australia': [-25.2744, 133.7751],
+      'germany': [51.1657, 10.4515],
+      'france': [46.2276, 2.2137],
+      'singapore': [1.3521, 103.8198],
+      'thailand': [15.8700, 100.9925],
+      'south africa': [-30.5595, 22.9375],
+      'canada': [56.1304, -106.3468],
+      'brazil': [-14.2350, -51.9253],
+      'china': [35.8617, 104.1954]
+    };
+
+    const state = {
+      datasetName: SAMPLES.global_sales.name,
+      rows: [...SAMPLES.global_sales.rows],
+      columns: [],
+      numericColumns: [],
+      activeTool: 'all',
+      labelCol: '',
+      valueCol: '',
+      agg: 'sum',
+      limit: '12',
+      searchQuery: '',
+      charts: {},
+      worldTopo: null
+    };
+
+    function showToast(msg, isError = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `fixed top-4 right-4 z-50 max-w-sm rounded-xl px-4 py-3 text-sm font-medium shadow-lg ${
+        isError ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'
+      }`;
+      el.classList.remove('hidden');
+      clearTimeout(el._timer);
+      el._timer = setTimeout(() => el.classList.add('hidden'), 3500);
+    }
+
+    function parseCSV(text, delimiter = ',') {
+      const lines = text.trim().split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length < 2) return [];
+      const splitLine = (line) => {
+        const out = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+            else inQuotes = !inQuotes;
+          } else if (ch === delimiter && !inQuotes) {
+            out.push(cur.trim());
+            cur = '';
+          } else {
+            cur += ch;
+          }
+        }
+        out.push(cur.trim());
+        return out;
+      };
+      const headers = splitLine(lines[0]).map((h, idx) => h || `Column_${idx + 1}`);
+      return lines.slice(1).map(line => {
+        const vals = splitLine(line);
+        const obj = {};
+        headers.forEach((h, i) => {
+          const raw = vals[i] ?? '';
+          const num = Number(raw.replace(/,/g, ''));
+          obj[h] = raw !== '' && !Number.isNaN(num) ? num : raw;
+        });
+        return obj;
+      });
+    }
+
+    function loadDataset(name, rows) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        showToast('No valid data rows found in file.', true);
+        return;
+      }
+      state.datasetName = name;
+      state.rows = rows;
+      state.columns = Object.keys(rows[0]);
+      state.numericColumns = state.columns.filter(col => {
+        let numCount = 0;
+        for (let i = 0; i < Math.min(rows.length, 25); i++) {
+          const v = rows[i][col];
+          if (typeof v === 'number' && !Number.isNaN(v)) numCount++;
+        }
+        return numCount > 0;
+      });
+
+      const nonNumeric = state.columns.filter(c => !state.numericColumns.includes(c));
+      state.labelCol = nonNumeric[0] || state.columns[0];
+      const nonCoordNum = state.numericColumns.filter(c => !/^(lat|latitude|lng|lon|longitude)$/i.test(c));
+      state.valueCol = nonCoordNum[0] || state.numericColumns[0] || state.columns[0];
+
+      document.getElementById('datasetName').textContent = name;
+      document.getElementById('datasetBadge').textContent = `${rows.length} rows • ${state.columns.length} columns`;
+
+      populateSelects();
+      renderAll();
+    }
+
+    function populateSelects() {
+      const labelSel = document.getElementById('labelCol');
+      const valueSel = document.getElementById('valueCol');
+      labelSel.innerHTML = '';
+      valueSel.innerHTML = '';
+
+      state.columns.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        if (c === state.labelCol) opt.selected = true;
+        labelSel.appendChild(opt);
+      });
+
+      const valCandidates = state.numericColumns.length ? state.numericColumns : state.columns;
+      valCandidates.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        if (c === state.valueCol) opt.selected = true;
+        valueSel.appendChild(opt);
+      });
+    }
+
+    function computeAggregated() {
+      const groups = new Map();
+      state.rows.forEach(row => {
+        const key = String(row[state.labelCol] ?? 'Unknown').trim() || 'Unknown';
+        const rawVal = Number(String(row[state.valueCol] ?? 0).replace(/,/g, ''));
+        const val = Number.isNaN(rawVal) ? 0 : rawVal;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(val);
+      });
+
+      let entries = [];
+      groups.forEach((vals, key) => {
+        let metric = 0;
+        if (state.agg === 'sum') metric = vals.reduce((a, b) => a + b, 0);
+        else if (state.agg === 'avg') metric = vals.reduce((a, b) => a + b, 0) / vals.length;
+        else if (state.agg === 'count') metric = vals.length;
+        else if (state.agg === 'max') metric = Math.max(...vals);
+        else if (state.agg === 'min') metric = Math.min(...vals);
+        entries.push({ label: key, value: Number(metric.toFixed(2)) });
+      });
+
+      if (state.limit !== 'all') {
+        entries = entries.slice(0, Number(state.limit));
+      }
+      return entries;
+    }
+
+    function formatNum(n) {
+      if (Number.isNaN(n)) return '0';
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(n);
+    }
+
+    function updateKPIs(entries) {
+      const total = entries.reduce((s, e) => s + e.value, 0);
+      const avg = entries.length ? total / entries.length : 0;
+      const top = entries.reduce((best, e) => (!best || e.value > best.value ? e : best), null);
+      document.getElementById('kpiTotal').textContent = formatNum(total);
+      document.getElementById('kpiAvg').textContent = formatNum(avg);
+      document.getElementById('kpiMax').textContent = top ? `${top.label} (${formatNum(top.value)})` : '—';
+      document.getElementById('kpiGroups').textContent = String(entries.length);
+    }
+
+    function destroyChart(id) {
+      if (state.charts[id]) {
+        state.charts[id].destroy();
+        delete state.charts[id];
+      }
+    }
+
+    function buildChartConfig(type, entries) {
+      const labels = entries.map(e => e.label);
+      const values = entries.map(e => e.value);
+      const colors = entries.map((_, i) => PALETTE[i % PALETTE.length]);
+      const isCircular = ['pie', 'doughnut', 'polarArea'].includes(type);
+      const isHorizontal = type === 'horizontalBar';
+      const actualType = isHorizontal ? 'bar' : type === 'area' ? 'line' : type;
+
+      if (type === 'scatter') {
+        const pts = entries.map((e, i) => ({ x: i + 1, y: e.value, label: e.label }));
+        return {
+          type: 'scatter',
+          data: {
+            datasets: [{
+              label: `${state.valueCol} by ${state.labelCol}`,
+              data: pts,
+              backgroundColor: PALETTE[0],
+              pointRadius: 6,
+              pointHoverRadius: 8
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              tooltip: { callbacks: { label: (ctx) => `${ctx.raw.label}: ${formatNum(ctx.raw.y)}` } }
+            },
+            scales: {
+              x: { title: { display: true, text: 'Group Index' } },
+              y: { title: { display: true, text: state.valueCol } }
+            }
+          }
+        };
+      }
+
+      return {
+        type: actualType,
+        data: {
+          labels,
+          datasets: [{
+            label: `${state.valueCol} (${state.agg})`,
+            data: values,
+            backgroundColor: isCircular || actualType === 'bar' ? colors : 'rgba(37, 99, 235, 0.18)',
+            borderColor: isCircular ? '#ffffff' : actualType === 'bar' ? colors : '#2563eb',
+            borderWidth: 2,
+            fill: type === 'area',
+            tension: 0.32,
+            borderRadius: actualType === 'bar' ? 6 : 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: isHorizontal ? 'y' : 'x',
+          plugins: {
+            legend: {
+              display: isCircular || type === 'radar',
+              position: 'bottom',
+              labels: { boxWidth: 12, font: { size: 11 } }
+            }
+          },
+          scales: isCircular || type === 'radar' ? {} : {
+            x: { grid: { display: false } },
+            y: { beginAtZero: true }
+          }
+        }
+      };
+    }
+
+    function renderChartOn(canvasId, type, entries) {
+      if (typeof Chart === 'undefined') return;
+      destroyChart(canvasId);
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      state.charts[canvasId] = new Chart(canvas.getContext('2d'), buildChartConfig(type, entries));
+    }
+
+    async function ensureWorldTopo() {
+      if (state.worldTopo) return state.worldTopo;
+      const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json');
+      if (!res.ok) throw new Error('Map data unavailable');
+      state.worldTopo = await res.json();
+      return state.worldTopo;
+    }
+
+    function extractMapPoints() {
+      const latCol = state.columns.find(c => /^(lat|latitude)$/i.test(c));
+      const lngCol = state.columns.find(c => /^(lng|lon|longitude)$/i.test(c));
+      const countryCol = state.columns.find(c => /^(country|nation|region|location)$/i.test(c));
+
+      const pts = [];
+      state.rows.forEach(r => {
+        const val = Number(String(r[state.valueCol] ?? 1).replace(/,/g, '')) || 1;
+        const label = String(r[state.labelCol] ?? 'Point');
+        if (latCol && lngCol) {
+          const lat = Number(r[latCol]);
+          const lng = Number(r[lngCol]);
+          if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+            pts.push({ label, lat, lng, value: val });
+            return;
+          }
+        }
+        const candidate = String((countryCol ? r[countryCol] : r[state.labelCol]) ?? '').toLowerCase().trim();
+        if (COUNTRY_COORDS[candidate]) {
+          const [lat, lng] = COUNTRY_COORDS[candidate];
+          pts.push({ label, lat, lng, value: val });
+        }
+      });
+      return { pts, countryCol };
+    }
+
+    async function renderWorldMap(containerId, hintId) {
+      const container = document.getElementById(containerId);
+      const hintEl = document.getElementById(hintId);
+      if (!container || typeof d3 === 'undefined' || typeof topojson === 'undefined') return;
+      container.innerHTML = '<div class="flex items-center justify-center h-full text-xs text-slate-400">Loading world map...</div>';
+
+      try {
+        const topo = await ensureWorldTopo();
+        const countries = topojson.feature(topo, topo.objects.countries);
+        const { pts, countryCol } = extractMapPoints();
+
+        const width = container.clientWidth || 760;
+        const height = container.clientHeight || 340;
+        container.innerHTML = '';
+
+        const svg = d3.select(container).append('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('class', 'w-full h-full');
+        const projection = d3.geoNaturalEarth1().fitSize([width - 20, height - 20], countries);
+        const path = d3.geoPath(projection);
+
+        const countryValues = new Map();
+        state.rows.forEach(r => {
+          const cName = String((countryCol ? r[countryCol] : r[state.labelCol]) ?? '').toLowerCase().trim();
+          const v = Number(String(r[state.valueCol] ?? 0).replace(/,/g, '')) || 0;
+          if (cName) countryValues.set(cName, (countryValues.get(cName) || 0) + v);
+        });
+        const maxCountryVal = Math.max(1, ...Array.from(countryValues.values()));
+        const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxCountryVal]);
+        const tooltip = document.getElementById('mapTooltip');
+
+        svg.append('g').selectAll('path').data(countries.features).join('path')
+          .attr('d', path)
+          .attr('fill', d => {
+            const nm = String(d.properties.name || '').toLowerCase();
+            return countryValues.has(nm) ? colorScale(countryValues.get(nm)) : '#e2e8f0';
+          })
+          .attr('stroke', '#ffffff').attr('stroke-width', 0.6)
+          .on('mousemove', (event, d) => {
+            const nm = d.properties.name || 'Country';
+            const val = countryValues.get(nm.toLowerCase());
+            tooltip.innerHTML = `<strong>${nm}</strong>${val !== undefined ? `<br/>${state.valueCol}: ${formatNum(val)}` : ''}`;
+            tooltip.style.left = `${event.clientX + 12}px`;
+            tooltip.style.top = `${event.clientY + 12}px`;
+            tooltip.style.display = 'block';
+          })
+          .on('mouseleave', () => { tooltip.style.display = 'none'; });
+
+        const maxPt = Math.max(1, ...pts.map(p => p.value));
+        const rScale = d3.scaleSqrt().domain([0, maxPt]).range([4, 18]);
+
+        svg.append('g').selectAll('circle').data(pts).join('circle')
+          .attr('cx', d => projection([d.lng, d.lat])[0])
+          .attr('cy', d => projection([d.lng, d.lat])[1])
+          .attr('r', d => rScale(d.value))
+          .attr('fill', 'rgba(239, 68, 68, 0.78)')
+          .attr('stroke', '#ffffff').attr('stroke-width', 1.5)
+          .on('mousemove', (event, d) => {
+            tooltip.innerHTML = `<strong>${d.label}</strong><br/>${state.valueCol}: ${formatNum(d.value)}`;
+            tooltip.style.left = `${event.clientX + 12}px`;
+            tooltip.style.top = `${event.clientY + 12}px`;
+            tooltip.style.display = 'block';
+          })
+          .on('mouseleave', () => { tooltip.style.display = 'none'; });
+
+        if (hintEl) {
+          hintEl.textContent = pts.length > 0
+            ? `Showing ${pts.length} geographic points and matched country shading.`
+            : 'No Lat/Lng or Country column matched in this dataset. Add a Country or Lat/Lng column to plot markers.';
+        }
+      } catch {
+        container.innerHTML = '<div class="flex items-center justify-center h-full text-xs text-slate-500">Could not load world map topology.</div>';
+      }
+    }
+
+    function renderTable() {
+      const thead = document.getElementById('tableHead');
+      const tbody = document.getElementById('tableBody');
+      const q = state.searchQuery.toLowerCase();
+      const filtered = q ? state.rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q))) : state.rows;
+      const shown = filtered.slice(0, 50);
+      document.getElementById('tableMeta').textContent = `Showing ${shown.length} of ${filtered.length} rows`;
+      thead.innerHTML = `<tr>${state.columns.map(c => `<th class="px-3 py-2 whitespace-nowrap">${c}</th>`).join('')}</tr>`;
+      tbody.innerHTML = shown.map(row => `<tr class="hover:bg-slate-50">${state.columns.map(c => `<td class="px-3 py-2 whitespace-nowrap text-slate-700">${row[c] ?? ''}</td>`).join('')}</tr>`).join('');
+    }
+
+    function renderAll() {
+      const entries = computeAggregated();
+      updateKPIs(entries);
+      renderTable();
+
+      const singleView = document.getElementById('singleView');
+      const gridView = document.getElementById('gridView');
+      const singleChartWrap = document.getElementById('singleChartWrap');
+      const singleMapWrap = document.getElementById('singleMapWrap');
+
+      if (state.activeTool === 'all') {
+        singleView.classList.add('hidden');
+        gridView.classList.remove('hidden');
+        renderChartOn('gridBar', 'bar', entries);
+        renderChartOn('gridPie', 'pie', entries);
+        renderChartOn('gridLine', 'line', entries);
+        renderChartOn('gridDoughnut', 'doughnut', entries);
+        renderWorldMap('gridMapContainer', 'gridMapHint');
+      } else {
+        gridView.classList.add('hidden');
+        singleView.classList.remove('hidden');
+        const labelMap = {
+          bar: 'Bar Graph', horizontalBar: 'Horizontal Bar Chart', pie: 'Pie Chart',
+          doughnut: 'Doughnut Chart', line: 'Line Chart', area: 'Area Chart',
+          scatter: 'Scatter Plot', radar: 'Radar Chart', polarArea: 'Polar Area Chart', map: 'World Geo Map'
+        };
+        document.getElementById('singleTitle').textContent = labelMap[state.activeTool] || 'Chart';
+        document.getElementById('singleSubtitle').textContent = `${state.valueCol} (${state.agg}) grouped by ${state.labelCol}`;
+
+        if (state.activeTool === 'map') {
+          singleChartWrap.classList.add('hidden');
+          singleMapWrap.classList.remove('hidden');
+          renderWorldMap('singleMapContainer', 'mapHint');
+        } else {
+          singleMapWrap.classList.add('hidden');
+          singleChartWrap.classList.remove('hidden');
+          renderChartOn('singleCanvas', state.activeTool, entries);
+        }
+      }
+    }
+
+    function setActiveTool(tool) {
+      state.activeTool = tool;
+      document.querySelectorAll('#chartBar .tool-pill').forEach(btn => btn.classList.toggle('active', btn.dataset.type === tool));
+      const activeBtn = document.querySelector(`#chartBar .tool-pill[data-type="${tool}"]`);
+      document.getElementById('activeToolLabel').textContent = `Viewing: ${activeBtn ? activeBtn.textContent.trim() : tool}`;
+      renderAll();
+    }
+
+    function handleFile(file) {
+      if (!file) return;
+      const ext = file.name.split('.').pop().toLowerCase();
+      const reader = new FileReader();
+      if (ext === 'xlsx' || ext === 'xls') {
+        if (typeof XLSX === 'undefined') return showToast('Excel parser still loading, please try again.', true);
+        reader.onload = (e) => {
+          try {
+            const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            loadDataset(file.name, rows);
+            showToast(`Loaded ${file.name} (${rows.length} rows)`);
+          } catch { showToast('Failed to parse Excel file.', true); }
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        reader.onload = (e) => {
+          try {
+            const text = e.target.result;
+            let rows = [];
+            if (ext === 'json') {
+              const parsed = JSON.parse(text);
+              rows = Array.isArray(parsed) ? parsed : (parsed.data || parsed.rows || [parsed]);
+            } else {
+              rows = parseCSV(text, ext === 'tsv' ? '\t' : ',');
+            }
+            loadDataset(file.name, rows);
+            showToast(`Loaded ${file.name} (${rows.length} rows)`);
+          } catch { showToast('Could not parse file. Check CSV/JSON formatting.', true); }
+        };
+        reader.readAsText(file);
+      }
+    }
+
+    document.getElementById('chartBar').addEventListener('click', (e) => {
+      const btn = e.target.closest('.tool-pill');
+      if (btn) setActiveTool(btn.dataset.type);
+    });
+    document.querySelectorAll('.focus-btn').forEach(btn => btn.addEventListener('click', () => setActiveTool(btn.dataset.focus)));
+    document.getElementById('sampleSelect').addEventListener('change', (e) => { const s = SAMPLES[e.target.value]; if (s) loadDataset(s.name, [...s.rows]); });
+    document.getElementById('labelCol').addEventListener('change', (e) => { state.labelCol = e.target.value; renderAll(); });
+    document.getElementById('valueCol').addEventListener('change', (e) => { state.valueCol = e.target.value; renderAll(); });
+    document.getElementById('aggSelect').addEventListener('change', (e) => { state.agg = e.target.value; renderAll(); });
+    document.getElementById('limitSelect').addEventListener('change', (e) => { state.limit = e.target.value; renderAll(); });
+    document.getElementById('tableSearch').addEventListener('input', (e) => { state.searchQuery = e.target.value; renderTable(); });
+    document.getElementById('fileInput').addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-active'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drop-active');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+
+    const pasteModal = document.getElementById('pasteModal');
+    document.getElementById('openPasteBtn').addEventListener('click', () => pasteModal.classList.remove('hidden'));
+    document.getElementById('closePasteBtn').addEventListener('click', () => pasteModal.classList.add('hidden'));
+    document.getElementById('cancelPasteBtn').addEventListener('click', () => pasteModal.classList.add('hidden'));
+    document.getElementById('loadPasteBtn').addEventListener('click', () => {
+      const raw = document.getElementById('pasteInput').value.trim();
+      if (!raw) return showToast('Please paste CSV or JSON data first.', true);
+      try {
+        const rows = raw.startsWith('[') || raw.startsWith('{')
+          ? (Array.isArray(JSON.parse(raw)) ? JSON.parse(raw) : [JSON.parse(raw)])
+          : parseCSV(raw, ',');
+        loadDataset('Pasted Dataset', rows);
+        pasteModal.classList.add('hidden');
+        showToast(`Loaded ${rows.length} pasted rows`);
+      } catch { showToast('Invalid CSV or JSON format.', true); }
+    });
+
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const canvasId = state.activeTool === 'all' ? 'gridBar' : 'singleCanvas';
+      const canvas = document.getElementById(canvasId);
+      if (state.activeTool === 'map' || !canvas) return showToast('Select any chart to download as PNG.');
+      const link = document.createElement('a');
+      link.download = `datapulse-${state.activeTool}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    });
+
+    window.addEventListener('load', () => {
+      loadDataset(SAMPLES.global_sales.name, [...SAMPLES.global_sales.rows]);
+    });
+  </script>
+</body>
+</html>
